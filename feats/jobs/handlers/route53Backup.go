@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsHttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
@@ -21,6 +19,7 @@ import (
 	"go.dfds.cloud/oops/core/config"
 	"go.dfds.cloud/oops/core/logging"
 	"go.dfds.cloud/oops/core/util"
+	"go.dfds.cloud/oops/feats/storage/s3"
 	"go.uber.org/zap"
 	"golang.org/x/sync/semaphore"
 )
@@ -40,11 +39,13 @@ func Route53Backup(ctx context.Context) error {
 		return err
 	}
 
+	// Fetch DNS records
 	recordsByAccountAndZone, err := fetchHostedZones(ctx, sessions)
 	if err != nil {
 		return err
 	}
 
+	// Dump all records into JSON and zone files
 	serialised, err := json.MarshalIndent(recordsByAccountAndZone, "", "  ")
 	if err != nil {
 		return err
@@ -81,11 +82,40 @@ func Route53Backup(ctx context.Context) error {
 		}
 	}
 
+	// compress and tarball
+	data, err := util.GzipAndTarballDirBuf("zones")
+	if err != nil {
+		return err
+	}
+	err = os.WriteFile("zones.tar.gz", data, 0644)
+	if err != nil {
+		return err
+	}
+
+	// Replicate tarball to backup destinations
+	confFromJson, err := config.LoadConfigFromJsonFile("conf.json")
+	if err != nil {
+		return err
+	}
+
+	for _, location := range confFromJson.BackupLocations {
+		switch location.Provider {
+		case "s3":
+			logging.Logger.Info("using aws s3 backend")
+			err = s3.HandleS3LocationPut(ctx, location, "zones.tar.gz", data)
+			if err != nil {
+				return err
+			}
+		default:
+			logging.Logger.Info(fmt.Sprintf("unknown provider %s, skipping", location.Provider))
+		}
+	}
+
 	return nil
 }
 
 func AssumeRole(ctx context.Context, roleArn string) (*types.Credentials, error) {
-	cfg, err := awsConfig.LoadDefaultConfig(ctx, awsConfig.WithRegion("eu-west-1"), awsConfig.WithHTTPClient(CreateHttpClientWithoutKeepAlive()))
+	cfg, err := awsConfig.LoadDefaultConfig(ctx, awsConfig.WithRegion("eu-west-1"), awsConfig.WithHTTPClient(oopsAws.CreateHttpClientWithoutKeepAlive()))
 	if err != nil {
 		log.Fatalf("unable to load SDK config, %v", err)
 	}
@@ -94,7 +124,7 @@ func AssumeRole(ctx context.Context, roleArn string) (*types.Credentials, error)
 
 	roleSessionName := "oops"
 
-	assumedRole, err := stsClient.AssumeRole(context.TODO(), &sts.AssumeRoleInput{RoleArn: &roleArn, RoleSessionName: &roleSessionName})
+	assumedRole, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{RoleArn: &roleArn, RoleSessionName: &roleSessionName})
 	if err != nil {
 		log.Printf("unable to assume role %s, %v", roleArn, err)
 		return nil, err
@@ -168,7 +198,7 @@ func AssumeRoleForAccounts(ctx context.Context, accounts []string, roleName stri
 	payloadMutex := &sync.Mutex{}
 	sem := semaphore.NewWeighted(maxConcurrentOps)
 
-	cfg, err := awsConfig.LoadDefaultConfig(ctx, awsConfig.WithRegion("eu-west-1"), awsConfig.WithHTTPClient(CreateHttpClientWithoutKeepAlive()))
+	cfg, err := awsConfig.LoadDefaultConfig(ctx, awsConfig.WithRegion("eu-west-1"), awsConfig.WithHTTPClient(oopsAws.CreateHttpClientWithoutKeepAlive()))
 	if err != nil {
 		return payload, err
 	}
@@ -185,13 +215,13 @@ func AssumeRoleForAccounts(ctx context.Context, accounts []string, roleName stri
 
 			stsClient := sts.NewFromConfig(cfg)
 			roleSessionName := "oops"
-			assumedRole, err := stsClient.AssumeRole(context.TODO(), &sts.AssumeRoleInput{RoleArn: &roleArn, RoleSessionName: &roleSessionName})
+			assumedRole, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{RoleArn: &roleArn, RoleSessionName: &roleSessionName})
 			if err != nil {
 				util.Logger.Debug(fmt.Sprintf("unable to assume role %s, skipping account", roleArn), zap.Error(err))
 				return
 			}
 
-			assumedCfg, err := awsConfig.LoadDefaultConfig(context.TODO(), awsConfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(*assumedRole.Credentials.AccessKeyId, *assumedRole.Credentials.SecretAccessKey, *assumedRole.Credentials.SessionToken)), awsConfig.WithRegion("eu-west-1"))
+			assumedCfg, err := awsConfig.LoadDefaultConfig(ctx, awsConfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(*assumedRole.Credentials.AccessKeyId, *assumedRole.Credentials.SecretAccessKey, *assumedRole.Credentials.SessionToken)), awsConfig.WithRegion("eu-west-1"))
 			if err != nil {
 				util.Logger.Error(fmt.Sprintf("unable to load SDK config, %v", err))
 				return
@@ -214,13 +244,4 @@ func AssumeRoleForAccounts(ctx context.Context, accounts []string, roleName stri
 type AwsSession struct {
 	AccountId     string
 	SessionConfig aws.Config
-}
-
-// CreateHttpClientWithoutKeepAlive Currently the AWS SDK seems to let connections live for way too long. On OSes that has a very low file descriptior limit this becomes an issue.
-func CreateHttpClientWithoutKeepAlive() *awsHttp.BuildableClient {
-	client := awsHttp.NewBuildableClient().WithTransportOptions(func(transport *http.Transport) {
-		transport.DisableKeepAlives = true
-	})
-
-	return client
 }

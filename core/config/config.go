@@ -68,3 +68,18 @@ func LoadConfigFromJsonFile(path string) (*Config, error) {
 
 	return conf, nil
 }
+
+func LocationSpecToType[T any](location BackupLocation) (*T, error) {
+	serialised, err := json.Marshal(location.Spec)
+	if err != nil {
+		return nil, err
+	}
+
+	var payload *T
+	err = json.Unmarshal(serialised, &payload)
+	if err != nil {
+		return nil, err
+	}
+
+	return payload, nil
+}
