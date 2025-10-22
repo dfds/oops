@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"sync"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	route53Types "github.com/aws/aws-sdk-go-v2/service/route53/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/aws/aws-sdk-go-v2/service/sts/types"
 	oopsAws "go.dfds.cloud/oops/core/aws"
 	"go.dfds.cloud/oops/core/config"
 	"go.dfds.cloud/oops/core/logging"
@@ -99,6 +97,9 @@ func Route53Backup(ctx context.Context) error {
 	}
 
 	for _, location := range confFromJson.BackupLocations {
+		if !location.Enabled {
+			continue
+		}
 		switch location.Provider {
 		case "s3":
 			logging.Logger.Info("using aws s3 backend")
@@ -112,25 +113,6 @@ func Route53Backup(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-func AssumeRole(ctx context.Context, roleArn string) (*types.Credentials, error) {
-	cfg, err := awsConfig.LoadDefaultConfig(ctx, awsConfig.WithRegion("eu-west-1"), awsConfig.WithHTTPClient(oopsAws.CreateHttpClientWithoutKeepAlive()))
-	if err != nil {
-		log.Fatalf("unable to load SDK config, %v", err)
-	}
-
-	stsClient := sts.NewFromConfig(cfg)
-
-	roleSessionName := "oops"
-
-	assumedRole, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{RoleArn: &roleArn, RoleSessionName: &roleSessionName})
-	if err != nil {
-		log.Printf("unable to assume role %s, %v", roleArn, err)
-		return nil, err
-	}
-
-	return assumedRole.Credentials, nil
 }
 
 func fetchHostedZones(ctx context.Context, sessions map[string]AwsSession) (map[string]map[string][]route53Types.ResourceRecordSet, error) {
@@ -217,13 +199,13 @@ func AssumeRoleForAccounts(ctx context.Context, accounts []string, roleName stri
 			roleSessionName := "oops"
 			assumedRole, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{RoleArn: &roleArn, RoleSessionName: &roleSessionName})
 			if err != nil {
-				util.Logger.Debug(fmt.Sprintf("unable to assume role %s, skipping account", roleArn), zap.Error(err))
+				logging.Logger.Debug(fmt.Sprintf("unable to assume role %s, skipping account", roleArn), zap.Error(err))
 				return
 			}
 
 			assumedCfg, err := awsConfig.LoadDefaultConfig(ctx, awsConfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(*assumedRole.Credentials.AccessKeyId, *assumedRole.Credentials.SecretAccessKey, *assumedRole.Credentials.SessionToken)), awsConfig.WithRegion("eu-west-1"))
 			if err != nil {
-				util.Logger.Error(fmt.Sprintf("unable to load SDK config, %v", err))
+				logging.Logger.Error(fmt.Sprintf("unable to load SDK config, %v", err))
 				return
 			}
 

@@ -9,13 +9,16 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	awsOops "go.dfds.cloud/oops/core/aws"
 	"go.dfds.cloud/oops/core/config"
 )
 
 type Config struct {
-	Auth   string `json:"auth"`
-	Bucket string `json:"bucket"`
+	Auth    string `json:"auth"`
+	Bucket  string `json:"bucket"`
+	RoleArn string `json:"roleArn"`
+	Region  string `json:"region"`
 }
 
 func HandleS3LocationPut(ctx context.Context, location config.BackupLocation, name string, content []byte) error {
@@ -27,14 +30,23 @@ func HandleS3LocationPut(ctx context.Context, location config.BackupLocation, na
 	var awsCfg aws.Config
 	// Determine config
 	switch spec.Auth {
+	case "aws-assume":
+		creds, err := awsOops.AssumeRole(ctx, spec.RoleArn)
+		if err != nil {
+			return err
+		}
+		awsCfg, err = awsConfig.LoadDefaultConfig(ctx, awsConfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(*creds.AccessKeyId, *creds.SecretAccessKey, *creds.SessionToken)), awsConfig.WithRegion(spec.Region))
+		if err != nil {
+			return err
+		}
 	case "aws-default":
-		awsCfg, err = awsConfig.LoadDefaultConfig(ctx, awsConfig.WithRegion("eu-west-1"), awsConfig.WithHTTPClient(awsOops.CreateHttpClientWithoutKeepAlive()))
+		awsCfg, err = awsConfig.LoadDefaultConfig(ctx, awsConfig.WithRegion(spec.Region), awsConfig.WithHTTPClient(awsOops.CreateHttpClientWithoutKeepAlive()))
 		if err != nil {
 			log.Fatalf("unable to load SDK config, %v", err)
 		}
 	default:
 		if spec.Auth == "" {
-			awsCfg, err = awsConfig.LoadDefaultConfig(ctx, awsConfig.WithRegion("eu-west-1"), awsConfig.WithHTTPClient(awsOops.CreateHttpClientWithoutKeepAlive()))
+			awsCfg, err = awsConfig.LoadDefaultConfig(ctx, awsConfig.WithRegion(spec.Region), awsConfig.WithHTTPClient(awsOops.CreateHttpClientWithoutKeepAlive()))
 			if err != nil {
 				log.Fatalf("unable to load SDK config, %v", err)
 			}
