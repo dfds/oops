@@ -12,6 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awsOops "go.dfds.cloud/oops/core/aws"
 	"go.dfds.cloud/oops/core/config"
+	"go.dfds.cloud/oops/core/logging"
+	"go.uber.org/zap"
 )
 
 type Config struct {
@@ -69,6 +71,8 @@ func HandleS3LocationPut(ctx context.Context, location config.BackupLocation, na
 	if err != nil {
 		return err
 	}
+
+	logging.Logger.Info("Saved backup to storage location", zap.String("location", location.Name), zap.String("provider", location.Provider), zap.String("bucket", spec.Bucket))
 
 	return nil
 }

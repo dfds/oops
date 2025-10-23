@@ -102,7 +102,7 @@ func Route53Backup(ctx context.Context) error {
 		}
 		switch location.Provider {
 		case "s3":
-			logging.Logger.Info("using aws s3 backend")
+			logging.Logger.Debug("using aws s3 backend", zap.String("locationName", location.Name))
 			err = s3.HandleS3LocationPut(ctx, location, "zones.tar.gz", data)
 			if err != nil {
 				return err
