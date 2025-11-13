@@ -1,0 +1,73 @@
+# Default values for ssu-mgmt.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+managedByHelm: true
+environment: "develop"
+
+image:
+  repository: dfdsdk/oops
+  pullPolicy: Always
+  tag: "latest"
+
+app:
+  config:
+    confSecretRef: oops
+  environment:
+    - name: SSU_OOPS_LOGLEVEL
+      value: info
+    - name: SSU_OOPS_ENABLE_OPERATOR
+      value: "true"
+    - name: SSU_OOPS_ADDITIONALCONFIGPATH
+      value: conf.json
+    - name: SSU_OOPS_JOB_ROUTE53BACKUP_ENABLE
+      value: "true"
+    - name: SSU_OOPS_JOB_ROUTE53BACKUP_INTERVAL
+      value: "1440m"
+    - name: SSU_OOPS_JOB_ROUTE53BACKUP_ASSUMEROLE
+      value: ssu-route53-read
+    - name: SSU_OOPS_JOB_ROUTE53BACKUP_ACCOUNTS
+      value: "012345986234"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  awsRoleArn: ""
+  annotations:
+    eks.amazonaws.com/sts-regional-endpoints: "true"
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+resources:
+  requests:
+    memory: "100Mi"
+    cpu: "100m"
+  limits:
+    memory: "1200Mi"
+    cpu: "1000m"
+
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+topologySpreadConstraints: {}
